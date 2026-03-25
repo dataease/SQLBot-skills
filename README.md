@@ -1,0 +1,2 @@
+# SQLBot-skills
+SQLBot skills
