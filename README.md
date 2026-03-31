@@ -169,7 +169,15 @@ python3 sqlbot_skills.py dashboard list --workspace "运营中心" --node-type l
 python3 sqlbot_skills.py dashboard show 4a2c7e5a0d1c4e4f8a0b5d1142f4c999 --workspace 2
 ```
 
-导出仪表板截图：
+导出仪表板截图（默认 JPG）：
+
+```bash
+python3 sqlbot_skills.py dashboard export 4a2c7e5a0d1c4e4f8a0b5d1142f4c999 \
+  --workspace 2 \
+  --output ./exports/dashboard.jpg
+```
+
+显式导出 PNG：
 
 ```bash
 python3 sqlbot_skills.py dashboard export 4a2c7e5a0d1c4e4f8a0b5d1142f4c999 \

@@ -1,7 +1,7 @@
 ---
 name: sqlbot-workspace-dashboard
-description: Manage SQLBot workspaces, datasources, ask-data flows, and dashboards, including listing and switching workspace or datasource context, asking questions against a datasource, listing dashboards, viewing dashboard details, and exporting dashboards as PNG or PDF.
-argument-hint: "[list-workspaces | switch-workspace <workspace> | list-datasources [--workspace <workspace>] | switch-datasource <datasource> [--workspace <workspace>] | ask <question> [--workspace <workspace>] [--datasource <datasource>] [--chat-id <id>] | list-dashboards [--workspace <workspace>] [--node-type folder|leaf] [--flat] | show-dashboard <dashboard-id> [--workspace <workspace>] | export-dashboard <dashboard-id> --format png|pdf [--workspace <workspace>] [--output <path>]]"
+description: Manage SQLBot workspaces, datasources, ask-data flows, and dashboards, including listing and switching workspace or datasource context, asking questions against a datasource, listing dashboards, viewing dashboard details, and exporting dashboards as JPG/PNG or PDF.
+argument-hint: "[list-workspaces | switch-workspace <workspace> | list-datasources [--workspace <workspace>] | switch-datasource <datasource> [--workspace <workspace>] | ask <question> [--workspace <workspace>] [--datasource <datasource>] [--chat-id <id>] | list-dashboards [--workspace <workspace>] [--node-type folder|leaf] [--flat] | show-dashboard <dashboard-id> [--workspace <workspace>] | export-dashboard <dashboard-id> [--format jpg|png|pdf] [--workspace <workspace>] [--output <path>]]"
 disable-model-invocation: true
 allowed-tools: Bash(python3 *), Read, Glob, Grep
 ---
@@ -84,7 +84,7 @@ python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" dashboard show "<dashboard-id>" -
 - Export dashboard:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" dashboard export "<dashboard-id>" --workspace "<workspace>" --format png --output "./dashboard.png"
+python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" dashboard export "<dashboard-id>" --workspace "<workspace>" --output "./dashboard.jpg"
 ```
 
 or
@@ -101,7 +101,7 @@ python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" dashboard export "<dashboard-id>"
 - Datasource list and ask-data also depend on the current workspace context.
 - SQLBot has no standalone datasource-switch API, so `datasource switch` updates the skill-local state file and `ask` uses that datasource by default when starting a new chat.
 - Preserve the user's requested output path for exports whenever possible.
-- If the user does not provide an export path, use the script default.
+- If the user does not provide an export path, use the script default (`./<dashboard-id>.jpg` unless another format is specified).
 - Summarize the command output clearly after execution.
 
 ## Additional resources

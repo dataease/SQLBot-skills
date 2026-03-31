@@ -18,7 +18,7 @@ Core files:
 - Ask data questions with a specified datasource or the current switched datasource
 - List dashboards in the current or specified workspace
 - Show dashboard details
-- Export dashboard to `png` or `pdf`
+- Export dashboard to `jpg` (default), `png`, or `pdf`
 
 ## Required configuration
 

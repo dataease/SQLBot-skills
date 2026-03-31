@@ -19,6 +19,8 @@ from urllib.request import HTTPCookieProcessor, OpenerDirector, Request, build_o
 API_PREFIX = "/api/v1"
 DEFAULT_ENV_FILE = ".env"
 DEFAULT_STATE_FILE = ".sqlbot-skill-state.json"
+DEFAULT_DASHBOARD_EXPORT_FORMAT = "jpg"
+SCREENSHOT_EXPORT_FORMATS = {"jpg", "jpeg", "png"}
 
 
 class SQLBotSkillError(RuntimeError):
@@ -46,6 +48,15 @@ class APIError(SQLBotSkillError):
 
 class BrowserError(SQLBotSkillError):
     """Raised when dashboard export in a browser fails."""
+
+
+def normalize_export_format(export_format: str) -> str:
+    normalized = export_format.lower()
+    if normalized == "jpeg":
+        return "jpg"
+    if normalized not in SCREENSHOT_EXPORT_FORMATS | {"pdf"}:
+        raise BrowserError("Unsupported export format. Use `jpg`, `png` or `pdf`.")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -80,8 +91,8 @@ class Datasource:
             description=_coalesce(payload.get("description")),
             type=_coalesce(payload.get("type")),
             type_name=_coalesce(payload.get("type_name")),
-            num=int(payload["num"]) if payload.get("num") is not None else None,
-            status=int(payload["status"]) if payload.get("status") is not None else None,
+            num=int(payload["num"]) if payload.get("num") is not None and str(payload["num"]).isdigit() else None,
+            status=int(payload["status"]) if payload.get("status") is not None and str(payload["status"]).isdigit() else None,
             oid=int(payload["oid"]) if payload.get("oid") is not None else None,
         )
 
@@ -360,6 +371,42 @@ def _coalesce(*values: str | None) -> str | None:
         if text:
             return text
     return None
+
+
+def _sanitize_preview_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized = {
+            key: _sanitize_preview_fields(item)
+            for key, item in value.items()
+            if key != "preview_url"
+        }
+        for axis_key in ("columns", "xAxis", "yAxis", "series"):
+            axis_value = sanitized.get(axis_key)
+            if isinstance(axis_value, list):
+                sanitized[axis_key] = [
+                    item
+                    for item in axis_value
+                    if not (isinstance(item, dict) and item.get("value") == "preview_url")
+                ]
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_preview_fields(item) for item in value]
+    return value
+
+
+def _sanitize_dashboard_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sanitized = _sanitize_preview_fields(payload)
+    canvas_view_info = sanitized.get("canvas_view_info")
+    if isinstance(canvas_view_info, str):
+        try:
+            parsed_canvas_view_info = json.loads(canvas_view_info)
+        except json.JSONDecodeError:
+            return sanitized
+        sanitized["canvas_view_info"] = json.dumps(
+            _sanitize_preview_fields(parsed_canvas_view_info),
+            ensure_ascii=False,
+        )
+    return sanitized
 
 
 def _parse_float(
@@ -769,19 +816,19 @@ class DashboardExporter:
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         preview_url = self.build_preview_url(dashboard_id)
+        normalized_format = normalize_export_format(export_format)
         self._run_playwright_export(
             preview_url=preview_url,
             output_path=destination,
-            export_format=export_format.lower(),
+            export_format=normalized_format,
             local_storage=self._build_local_storage(resolved_workspace),
         )
         return {
             "dashboard_id": dashboard_id,
             "dashboard_name": dashboard.get("name"),
             "workspace_id": resolved_workspace.id if resolved_workspace else dashboard.get("workspace_id"),
-            "format": export_format.lower(),
+            "format": normalized_format,
             "output_path": str(destination),
-            "preview_url": preview_url,
         }
 
     def _build_local_storage(self, workspace: Workspace | None) -> dict[str, str]:
@@ -806,8 +853,7 @@ class DashboardExporter:
                 "`pip install -e .[browser]` and then run `playwright install chromium`."
             ) from exc
 
-        if export_format not in {"png", "pdf"}:
-            raise BrowserError("Unsupported export format. Use `png` or `pdf`.")
+        normalized_format = normalize_export_format(export_format)
 
         launch_options: dict[str, Any] = {"headless": True}
         if self.browser_path:
@@ -829,8 +875,17 @@ class DashboardExporter:
                 page.wait_for_selector(self.ready_selector, state="visible", timeout=self.timeout_ms)
                 page.wait_for_timeout(self.wait_for_ms)
                 export_size = self._prepare_export_layout(page)
-                if export_format == "png":
-                    page.screenshot(path=str(output_path), full_page=True)
+                if normalized_format in SCREENSHOT_EXPORT_FORMATS:
+                    screenshot_options: dict[str, Any] = {
+                        "path": str(output_path),
+                        "full_page": True,
+                    }
+                    if normalized_format == "jpg":
+                        screenshot_options["type"] = "jpeg"
+                        screenshot_options["quality"] = 90
+                    else:
+                        screenshot_options["type"] = "png"
+                    page.screenshot(**screenshot_options)
                 else:
                     page.pdf(
                         path=str(output_path),
@@ -1004,7 +1059,7 @@ class WorkspaceDashboardSkill:
         workspace: int | str | Workspace | None = None,
     ) -> dict[str, Any]:
         self._switch_workspace_if_requested(workspace)
-        return self.client.get_dashboard(dashboard_id)
+        return _sanitize_dashboard_payload(self.client.get_dashboard(dashboard_id))
 
     def export_dashboard(
         self,
@@ -1165,10 +1220,15 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_show.add_argument("dashboard_id", help="Dashboard id.")
     dashboard_show.add_argument("--workspace", help="Workspace id or exact name.")
 
-    dashboard_export = dashboard_subparsers.add_parser("export", help="Export dashboard as screenshot or PDF.")
+    dashboard_export = dashboard_subparsers.add_parser("export", help="Export dashboard as JPG/PNG screenshot or PDF.")
     dashboard_export.add_argument("dashboard_id", help="Dashboard id.")
     dashboard_export.add_argument("--workspace", help="Workspace id or exact name.")
-    dashboard_export.add_argument("--format", choices=["png", "pdf"], required=True, help="Export format.")
+    dashboard_export.add_argument(
+        "--format",
+        choices=["jpg", "jpeg", "png", "pdf"],
+        default=DEFAULT_DASHBOARD_EXPORT_FORMAT,
+        help=f"Export format. Defaults to {DEFAULT_DASHBOARD_EXPORT_FORMAT}.",
+    )
     dashboard_export.add_argument("--output", help="Output file path. Defaults to ./<dashboard_id>.<format>.")
 
     ask_parser = subparsers.add_parser("ask", help="Ask a natural-language question against a datasource.")
@@ -1234,11 +1294,12 @@ def _run_dashboard(skill: WorkspaceDashboardSkill, args: argparse.Namespace) -> 
         _print_json(skill.view_dashboard(args.dashboard_id, workspace=args.workspace))
         return 0
     if args.dashboard_command == "export":
-        output = args.output or f"./{args.dashboard_id}.{args.format}"
+        export_format = normalize_export_format(args.format)
+        output = args.output or f"./{args.dashboard_id}.{export_format}"
         payload = skill.export_dashboard(
             args.dashboard_id,
             output,
-            export_format=args.format,
+            export_format=export_format,
             workspace=args.workspace,
         )
         _print_json(payload)
